@@ -68,6 +68,66 @@ func main() {
 - `POST /fastgocaptcha/verify`: Verify the captcha solution
 - `GET /static/fastgocaptcha/gocaptcha.global.css`: Captcha CSS styles
 - `GET /static/fastgocaptcha/gocaptcha.global.js`: Captcha JavaScript
+- `GET /static/fastgocaptcha/fastgocaptcha.js`: FastGoCaptcha helper JavaScript
+
+### Client-Side Integration
+
+FastGoCaptcha provides a built-in JavaScript helper for easy client-side integration. The `fastgocaptcha.js` file is automatically embedded and served with the application.
+
+#### Using showSlideCaptcha
+
+The `showSlideCaptcha` function provides an easy way to display and handle the captcha in your web application:
+
+```javascript
+// Include the script in your HTML
+// <script src="/static/fastgocaptcha/fastgocaptcha.js"></script>
+
+// Basic usage
+showSlideCaptcha({
+    captchaUrl: '/fastgocaptcha/captcha',  // URL to fetch captcha data
+    verifyUrl: '/fastgocaptcha/verify',    // URL to verify captcha
+    onSuccess: function() {
+        console.log('Verification successful');
+        // Handle successful verification
+    },
+    onError: function(msg) {
+        console.error('Verification failed:', msg);
+        // Handle verification failure
+    }
+});
+
+// Advanced options
+showSlideCaptcha({
+    captchaUrl: '/fastgocaptcha/captcha',
+    verifyUrl: '/fastgocaptcha/verify',
+    containerId: 'captcha-container',  // Custom container ID
+    title: 'Security Verification',    // Custom title
+    subtitle: 'Slide to verify',       // Custom subtitle
+    extraData: {                       // Extra data to send with verification
+        token: 'your-token-here',
+        userId: 'user-id'
+    },
+    onSuccess: function() {
+        // Success callback
+    },
+    onError: function(msg) {
+        // Error callback
+    }
+});
+```
+
+The `showSlideCaptcha` function supports the following options:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| captchaUrl | string | URL to fetch captcha data (default: `/fastgocaptcha/captcha`) |
+| verifyUrl | string | URL to verify captcha (default: `/fastgocaptcha/verify`) |
+| containerId | string | ID of container element (default: auto-generated) |
+| title | string | Title of captcha dialog |
+| subtitle | string | Subtitle of captcha dialog |
+| extraData | object | Additional data to send with verification request |
+| onSuccess | function | Callback on successful verification |
+| onError | function | Callback on verification error |
 
 ### Response Examples
 
@@ -226,6 +286,66 @@ func main() {
 - `POST /fastgocaptcha/verify`：验证验证码答案
 - `GET /static/fastgocaptcha/gocaptcha.global.css`：验证码 CSS 样式
 - `GET /static/fastgocaptcha/gocaptcha.global.js`：验证码 JavaScript
+- `GET /static/fastgocaptcha/fastgocaptcha.js`：FastGoCaptcha 辅助 JavaScript
+
+### 客户端集成
+
+FastGoCaptcha 提供了内置的 JavaScript 辅助工具，便于客户端集成。`fastgocaptcha.js` 文件自动嵌入并随应用程序一起提供。
+
+#### 使用 showSlideCaptcha
+
+`showSlideCaptcha` 函数提供了一种简单的方式在你的 Web 应用中显示和处理验证码：
+
+```javascript
+// 在 HTML 中引入脚本
+// <script src="/static/fastgocaptcha/fastgocaptcha.js"></script>
+
+// 基本用法
+showSlideCaptcha({
+    captchaUrl: '/fastgocaptcha/captcha',  // 获取验证码数据的 URL
+    verifyUrl: '/fastgocaptcha/verify',    // 验证验证码的 URL
+    onSuccess: function() {
+        console.log('验证成功');
+        // 处理验证成功的逻辑
+    },
+    onError: function(msg) {
+        console.error('验证失败:', msg);
+        // 处理验证失败的逻辑
+    }
+});
+
+// 高级选项
+showSlideCaptcha({
+    captchaUrl: '/fastgocaptcha/captcha',
+    verifyUrl: '/fastgocaptcha/verify',
+    containerId: 'captcha-container',  // 自定义容器 ID
+    title: '安全验证',                  // 自定义标题
+    subtitle: '滑动验证',               // 自定义副标题
+    extraData: {                       // 验证时发送的额外数据
+        token: 'your-token-here',
+        userId: 'user-id'
+    },
+    onSuccess: function() {
+        // 成功回调
+    },
+    onError: function(msg) {
+        // 错误回调
+    }
+});
+```
+
+`showSlideCaptcha` 函数支持以下选项：
+
+| 选项 | 类型 | 描述 |
+|------|------|------|
+| captchaUrl | string | 获取验证码数据的 URL（默认：`/fastgocaptcha/captcha`） |
+| verifyUrl | string | 验证验证码的 URL（默认：`/fastgocaptcha/verify`） |
+| containerId | string | 容器元素的 ID（默认：自动生成） |
+| title | string | 验证码对话框的标题 |
+| subtitle | string | 验证码对话框的副标题 |
+| extraData | object | 验证请求时发送的额外数据 |
+| onSuccess | function | 验证成功时的回调函数 |
+| onError | function | 验证错误时的回调函数 |
 
 ### 响应示例
 

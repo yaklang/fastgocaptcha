@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Go-Captcha 滑动验证</title>
     <!-- 引入 go-captcha-jslib 的 CSS -->
-    <link href="/static/fastgocaptcha/gocaptcha.global.css" rel="stylesheet">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -53,104 +52,19 @@
     </div>
 
     <!-- 引入 go-captcha-jslib 的 JS -->
-    <script src="/static/fastgocaptcha/gocaptcha.global.js"></script>
+    <script src="/static/fastgocaptcha/fastgocaptcha.js"></script>
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const successMessage = document.querySelector('.success-message');
-            const errorMessage = document.querySelector('.error-message');
-            let captchaId = '';
-
-            // 创建验证码实例
-            const capt = new GoCaptcha.Slide({
-                width: 300,
-                height: 220,
-                text: {
-                    loading: '加载中...',
-                    slide: '请拖动滑块完成拼图',
-                    success: '验证成功',
-                    error: '验证失败',
-                    refresh: '刷新验证码'
-                }
-            });
-
-            // 挂载到容器
-            capt.mount(document.getElementById('slide-wrap'));
-
-            // 加载验证码
-            function loadCaptcha() {
-                successMessage.style.display = 'none';
-                errorMessage.style.display = 'none';
-
-                fetch('/fastgocaptcha/captcha')
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error('Network response was not ok');
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        if (!data.fastgocaptcha_image_base64 || !data.fastgocaptcha_thumb_base64) {
-
-                            throw new Error('Invalid captcha data received');
-                        }
-                        captchaId = data.fastgocaptcha_id;
-                        console.log('data', data);
-                        // 设置验证码数据
-                        capt.setData({
-                            image: data.fastgocaptcha_image_base64,
-                            thumb: data.fastgocaptcha_thumb_base64,
-                            thumbWidth: data.fastgocaptcha_thumb_width,
-                            thumbHeight: data.fastgocaptcha_thumb_height,
-                            thumbX: data.fastgocaptcha_thumb_x,
-                            thumbY: data.fastgocaptcha_thumb_y,
-                        });
-                    })
-                    .catch(err => {
-                        console.error('Failed to load captcha:', err);
-                        errorMessage.textContent = '验证码加载失败，请刷新重试';
-                        errorMessage.style.display = 'block';
-                    });
+        showSlideCaptcha({
+            onSuccess: function(data) {
+                alert("验证成功")
+            },
+            onError: function(error) {
+                alert("验证失败")
+            },
+            onClose: function() {
+                alert("验证码关闭")
             }
-
-            // 设置事件处理
-            capt.setEvents({
-                confirm(point, reset) {
-                    const formData = new FormData();
-                    formData.append('id', captchaId);
-                    formData.append('x', point.x);
-                    
-                    fetch('/fastgocaptcha/verify', {
-                        method: 'POST',
-                        body: formData
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            successMessage.style.display = 'block';
-                            errorMessage.style.display = 'none';
-                        } else {
-                            errorMessage.style.display = 'block';
-                            successMessage.style.display = 'none';
-                            reset();
-                            // 重新加载验证码
-                            setTimeout(loadCaptcha, 1000);
-                        }
-                    })
-                    .catch(err => {
-                        console.error('Verification failed:', err);
-                        errorMessage.style.display = 'block';
-                        successMessage.style.display = 'none';
-                        reset();
-                    });
-                },
-                refresh() {
-                    loadCaptcha();
-                }
-            });
-
-            // 初始加载验证码
-            loadCaptcha();
         });
-    </script>
+    </script>  
 </body>
 </html>

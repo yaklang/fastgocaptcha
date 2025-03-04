@@ -15,6 +15,9 @@ import (
 	"github.com/wenlng/go-captcha/v2/slide"
 )
 
+//go:embed resources/v1.0.9/fastgocaptcha.js
+var fastgocaptchaJS []byte
+
 //go:embed resources/v1.0.9/gocaptcha.global.css
 var gocaptchaGlobalCSS []byte
 
@@ -168,6 +171,10 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 
 	skipped = true
 	switch removePrefix {
+	case "/static/fastgocaptcha/fastgocaptcha.js":
+		skipped = false
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Write(fastgocaptchaJS)
 	case "/static/fastgocaptcha/gocaptcha.global.css":
 		skipped = false
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
