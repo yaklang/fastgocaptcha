@@ -70,9 +70,9 @@ func main() {
 - `GET /fastgocaptcha/captcha`: Generate a new captcha
 - `POST /fastgocaptcha/verify`: Verify the captcha solution
 - `GET /fastgocaptcha/session/captcha`: Get captcha with session support
-- `GET /static/fastgocaptcha/gocaptcha.global.css`: Captcha CSS styles
-- `GET /static/fastgocaptcha/gocaptcha.global.js`: Captcha JavaScript
-- `GET /static/fastgocaptcha/fastgocaptcha.js`: FastGoCaptcha helper JavaScript
+- `GET /fastgocaptcha/resources/gocaptcha.global.css`: Captcha CSS styles
+- `GET /fastgocaptcha/resources/gocaptcha.global.js`: Captcha JavaScript
+- `GET /fastgocaptcha/resources/fastgocaptcha.js`: FastGoCaptcha helper JavaScript
 
 ### Route Protection
 
@@ -118,7 +118,7 @@ The `showSlideCaptcha` function provides an easy way to display and handle the c
 
 ```javascript
 // Include the script in your HTML
-// <script src="/static/fastgocaptcha/fastgocaptcha.js"></script>
+// <script src="/fastgocaptcha/resources/fastgocaptcha.js"></script>
 
 // Basic usage
 showSlideCaptcha({
@@ -386,9 +386,9 @@ func main() {
 - `GET /fastgocaptcha/captcha`：生成新的验证码
 - `POST /fastgocaptcha/verify`：验证验证码答案
 - `GET /fastgocaptcha/session/captcha`：获取带会话支持的验证码
-- `GET /static/fastgocaptcha/gocaptcha.global.css`：验证码 CSS 样式
-- `GET /static/fastgocaptcha/gocaptcha.global.js`：验证码 JavaScript
-- `GET /static/fastgocaptcha/fastgocaptcha.js`：FastGoCaptcha 辅助 JavaScript
+- `GET /fastgocaptcha/resources/gocaptcha.global.css`：验证码 CSS 样式
+- `GET /fastgocaptcha/resources/gocaptcha.global.js`：验证码 JavaScript
+- `GET /fastgocaptcha/resources/fastgocaptcha.js`：FastGoCaptcha 辅助 JavaScript
 
 ### 路由保护
 
@@ -434,7 +434,7 @@ FastGoCaptcha 提供了内置的 JavaScript 辅助工具，便于客户端集成
 
 ```javascript
 // 在 HTML 中引入脚本
-// <script src="/static/fastgocaptcha/fastgocaptcha.js"></script>
+// <script src="/fastgocaptcha/resources/fastgocaptcha.js"></script>
 
 // 基本用法
 showSlideCaptcha({

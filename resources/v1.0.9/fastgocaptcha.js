@@ -25,17 +25,17 @@ function showSlideCaptcha(options = {}) {
     function ensureDependenciesLoaded() {
         return new Promise((resolve, reject) => {
             // 检查CSS是否已加载
-            if (!document.querySelector('link[href="/static/fastgocaptcha/gocaptcha.global.css"]')) {
+            if (!document.querySelector('link[href="/fastgocaptcha/resources/gocaptcha.global.css"]')) {
                 const cssLink = document.createElement('link');
                 cssLink.rel = 'stylesheet';
-                cssLink.href = '/static/fastgocaptcha/gocaptcha.global.css';
+                cssLink.href = '/fastgocaptcha/resources/gocaptcha.global.css';
                 document.head.appendChild(cssLink);
             }
             
             // 检查JS是否已加载
             if (typeof GoCaptcha === 'undefined') {
                 const jsScript = document.createElement('script');
-                jsScript.src = '/static/fastgocaptcha/gocaptcha.global.js';
+                jsScript.src = '/fastgocaptcha/resources/gocaptcha.global.js';
                 jsScript.onload = resolve;
                 jsScript.onerror = reject;
                 document.head.appendChild(jsScript);

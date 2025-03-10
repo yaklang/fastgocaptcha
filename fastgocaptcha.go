@@ -324,15 +324,15 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 
 	skipped = true
 	switch removePrefix {
-	case "/static/fastgocaptcha/fastgocaptcha.js":
+	case "/fastgocaptcha/resources/fastgocaptcha.js":
 		skipped = false
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Write(fastgocaptchaJS)
-	case "/static/fastgocaptcha/gocaptcha.global.css":
+	case "/fastgocaptcha/resources/gocaptcha.global.css":
 		skipped = false
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		w.Write(gocaptchaGlobalCSS)
-	case "/static/fastgocaptcha/gocaptcha.global.js":
+	case "/fastgocaptcha/resources/gocaptcha.global.js":
 		skipped = false
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Write(gocaptchaGlobalJS)
