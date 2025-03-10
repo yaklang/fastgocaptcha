@@ -16,6 +16,9 @@ FastGoCaptcha is a high-performance, easy-to-integrate sliding captcha solution 
 - Flexible Storage: Customizable storage backend with default in-memory implementation
 - Zero Configuration: No CDN or external resources required
 - Built-in Assets: All required resources are embedded using Go's embed feature
+- Route Protection: Protect specific routes with captcha verification
+- Session Management: Built-in session support for persistent verification
+- Flexible Timeout: Configure different timeout periods for different routes
 
 ### Dependencies
 
@@ -66,9 +69,44 @@ func main() {
 
 - `GET /fastgocaptcha/captcha`: Generate a new captcha
 - `POST /fastgocaptcha/verify`: Verify the captcha solution
+- `GET /fastgocaptcha/session/captcha`: Get captcha with session support
 - `GET /static/fastgocaptcha/gocaptcha.global.css`: Captcha CSS styles
 - `GET /static/fastgocaptcha/gocaptcha.global.js`: Captcha JavaScript
 - `GET /static/fastgocaptcha/fastgocaptcha.js`: FastGoCaptcha helper JavaScript
+
+### Route Protection
+
+FastGoCaptcha allows you to protect specific routes with captcha verification:
+
+```go
+// Protect a route with a 10-minute timeout
+captcha.AddProtectMatcherWithTimeout("/admin/*", 10*time.Minute)
+
+// Protect a route that requires verification every time
+captcha.AddProtectMatcherEverytime("/api/sensitive/*")
+
+// Remove protection from a route
+captcha.RemoveProtectMatcher("/admin/*")
+```
+
+When a user accesses a protected route, they will be required to solve a captcha. After successful verification, the user can access the protected route without re-verification until the timeout expires.
+
+### Session Management
+
+FastGoCaptcha provides built-in session management for persistent verification:
+
+```go
+// Get captcha ID from session
+id, err := captcha.GetCaptchaIDFromSession(r)
+
+// Update session's captcha timeout
+captcha.UpdateSessionCaptchaExpiresAt(r, 30*time.Minute)
+
+// Reset captcha verification count
+captcha.UpdateSessionCaptchaTimes(r, 0)
+```
+
+This allows you to maintain verification state across requests, enhancing both security and user experience.
 
 ### Client-Side Integration
 
@@ -171,6 +209,7 @@ import (
     "fmt"
     "log"
     "net/http"
+    "time"
 
     "github.com/VillanCh/fastgocaptcha"
 )
@@ -185,28 +224,87 @@ func main() {
         log.Fatalf("Failed to create captcha: %v", err)
     }
 
-    // Serve the test page
+    // Protect sensitive routes
+    captcha.AddProtectMatcherWithTimeout("/admin/*", 10*time.Minute)
+    captcha.AddProtectMatcherEverytime("/api/sensitive/*")
+
+    // Create handlers
+    adminHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("Admin area - Protected by captcha"))
+    })
+
+    apiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("API endpoint - Protected by captcha"))
+    })
+
+    // Register routes with middleware
+    http.Handle("/admin/", captcha.Middleware(adminHandler))
+    http.Handle("/api/sensitive/", captcha.Middleware(apiHandler))
     http.Handle("/", captcha.GetTestPageHTTPHandler())
 
-    // Start the server with middleware
+    // Start the server
     port := 8126
     addr := fmt.Sprintf(":%d", port)
     log.Printf("Starting server at %s", addr)
     log.Printf("Access the application at http://localhost%s", addr)
     
-    // Use the middleware to handle captcha requests
-    log.Fatal(http.ListenAndServe(addr, captcha.Middleware(captcha.GetTestPageHTTPHandler())))
+    log.Fatal(http.ListenAndServe(addr, nil))
 }
 ```
 
-The example demonstrates:
+This example demonstrates:
 1. Basic server setup with logging
 2. Captcha instance creation
-3. Test page serving
-4. Middleware integration
-5. Server startup with custom port
+3. Route protection configuration
+4. Custom handler creation
+5. Middleware integration
+6. Server startup
 
 You can run this example and access the test page at `http://localhost:8126` to see the captcha in action.
+
+### Web Behind Captcha Example
+
+The following example shows how to protect a web application behind a captcha gateway:
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/VillanCh/fastgocaptcha"
+)
+
+func main() {
+    // Create a new captcha instance
+    captcha, err := fastgocaptcha.NewFastGoCaptcha()
+    if err != nil {
+        log.Fatalf("Failed to create captcha: %v", err)
+    }
+
+    // Protect all routes
+    captcha.AddProtectMatcherWithTimeout("/*", 30*time.Minute)
+
+    // Create a file server for your web application
+    fileServer := http.FileServer(http.Dir("./webroot"))
+    
+    // Wrap the file server with captcha middleware
+    http.Handle("/", captcha.Middleware(fileServer))
+
+    // Start the server
+    port := 8126
+    addr := fmt.Sprintf(":%d", port)
+    log.Printf("Starting server at %s", addr)
+    log.Printf("Access the application at http://localhost%s", addr)
+    
+    log.Fatal(http.ListenAndServe(addr, nil))
+}
+```
+
+This example shows how to place an entire web application behind a captcha verification gateway. Users must solve the captcha once before accessing any part of the site for the next 30 minutes.
 
 ### Custom Storage
 
@@ -234,6 +332,9 @@ FastGoCaptcha 是一个高性能、易于集成的滑动验证码解决方案，
 - 灵活存储：可自定义存储后端，默认使用内存实现
 - 零配置：无需配置 CDN 或外部资源
 - 内置资源：使用 Go 的 embed 特性嵌入所有必要资源
+- 路由保护：通过验证码验证保护特定路由
+- 会话管理：内置会话支持，实现持久化验证
+- 灵活超时：为不同路由配置不同的超时时间
 
 ### 依赖说明
 
@@ -284,9 +385,44 @@ func main() {
 
 - `GET /fastgocaptcha/captcha`：生成新的验证码
 - `POST /fastgocaptcha/verify`：验证验证码答案
+- `GET /fastgocaptcha/session/captcha`：获取带会话支持的验证码
 - `GET /static/fastgocaptcha/gocaptcha.global.css`：验证码 CSS 样式
 - `GET /static/fastgocaptcha/gocaptcha.global.js`：验证码 JavaScript
 - `GET /static/fastgocaptcha/fastgocaptcha.js`：FastGoCaptcha 辅助 JavaScript
+
+### 路由保护
+
+FastGoCaptcha 允许您通过验证码验证来保护特定路由：
+
+```go
+// 使用 10 分钟超时保护路由
+captcha.AddProtectMatcherWithTimeout("/admin/*", 10*time.Minute)
+
+// 保护需要每次都验证的路由
+captcha.AddProtectMatcherEverytime("/api/sensitive/*")
+
+// 移除路由保护
+captcha.RemoveProtectMatcher("/admin/*")
+```
+
+当用户访问受保护的路由时，他们将被要求解决验证码。成功验证后，用户可以在超时之前访问受保护的路由而无需重新验证。
+
+### 会话管理
+
+FastGoCaptcha 提供内置会话管理，用于持久化验证：
+
+```go
+// 从会话中获取验证码 ID
+id, err := captcha.GetCaptchaIDFromSession(r)
+
+// 更新会话的验证码超时时间
+captcha.UpdateSessionCaptchaExpiresAt(r, 30*time.Minute)
+
+// 重置验证码验证次数
+captcha.UpdateSessionCaptchaTimes(r, 0)
+```
+
+这允许您在请求之间维持验证状态，增强安全性和用户体验。
 
 ### 客户端集成
 
@@ -389,6 +525,7 @@ import (
     "fmt"
     "log"
     "net/http"
+    "time"
 
     "github.com/VillanCh/fastgocaptcha"
 )
@@ -403,28 +540,87 @@ func main() {
         log.Fatalf("创建验证码失败: %v", err)
     }
 
-    // 提供测试页面
+    // 保护敏感路由
+    captcha.AddProtectMatcherWithTimeout("/admin/*", 10*time.Minute)
+    captcha.AddProtectMatcherEverytime("/api/sensitive/*")
+
+    // 创建处理器
+    adminHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("管理区域 - 受验证码保护"))
+    })
+
+    apiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("API 端点 - 受验证码保护"))
+    })
+
+    // 注册带中间件的路由
+    http.Handle("/admin/", captcha.Middleware(adminHandler))
+    http.Handle("/api/sensitive/", captcha.Middleware(apiHandler))
     http.Handle("/", captcha.GetTestPageHTTPHandler())
 
-    // 启动服务器（使用中间件）
+    // 启动服务器
     port := 8126
     addr := fmt.Sprintf(":%d", port)
     log.Printf("服务器启动在 %s", addr)
     log.Printf("访问地址: http://localhost%s", addr)
     
-    // 使用中间件处理验证码请求
-    log.Fatal(http.ListenAndServe(addr, captcha.Middleware(captcha.GetTestPageHTTPHandler())))
+    log.Fatal(http.ListenAndServe(addr, nil))
 }
 ```
 
 这个示例展示了：
 1. 基本的服务器设置和日志配置
 2. 验证码实例的创建
-3. 测试页面的提供
-4. 中间件的集成
-5. 自定义端口的服务器启动
+3. 路由保护配置
+4. 自定义处理器创建
+5. 中间件集成
+6. 服务器启动
 
 你可以运行这个示例，然后访问 `http://localhost:8126` 来查看验证码的实际效果。
+
+### 验证码后的网页示例
+
+以下示例展示了如何在验证码网关后保护网页应用：
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/VillanCh/fastgocaptcha"
+)
+
+func main() {
+    // 创建新的验证码实例
+    captcha, err := fastgocaptcha.NewFastGoCaptcha()
+    if err != nil {
+        log.Fatalf("创建验证码失败: %v", err)
+    }
+
+    // 保护所有路由
+    captcha.AddProtectMatcherWithTimeout("/*", 30*time.Minute)
+
+    // 为您的网页应用创建文件服务器
+    fileServer := http.FileServer(http.Dir("./webroot"))
+    
+    // 用验证码中间件包装文件服务器
+    http.Handle("/", captcha.Middleware(fileServer))
+
+    // 启动服务器
+    port := 8126
+    addr := fmt.Sprintf(":%d", port)
+    log.Printf("服务器启动在 %s", addr)
+    log.Printf("访问地址: http://localhost%s", addr)
+    
+    log.Fatal(http.ListenAndServe(addr, nil))
+}
+```
+
+这个示例展示了如何将整个网页应用放在验证码验证网关后面。用户必须先解决验证码，然后才能在接下来的 30 分钟内访问网站的任何部分。
 
 ### 自定义存储
 
