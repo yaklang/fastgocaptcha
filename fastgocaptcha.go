@@ -260,11 +260,12 @@ func (f *FastGoCaptcha) Middleware(next http.Handler) http.Handler {
 					return
 				}
 
-				var x string
-				x = r.URL.Query().Get("fastgocaptcha_x")
+				x := r.URL.Query().Get("fastgocaptcha_x")
 				if x == "" {
 					w.WriteHeader(http.StatusBadRequest)
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					authPath := `/fastgocaptcha/session/captcha?fastgocaptcha_path=` + url.QueryEscape(r.URL.Path)
+					w.Header().Set("X-FastGoCaptcha-Auth", authPath)
 					w.Write([]byte(
 						"<html><body>" +
 							"This route requires a x value(fastgocaptcha_x), view <a href='/fastgocaptcha/session/captcha?fastgocaptcha_path=" + url.QueryEscape(r.URL.Path) + "'>here</a>" +
