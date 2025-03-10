@@ -52,7 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("create fast go capture failed: %s", err)
 	}
-	err = cap.AddProtectMatcherWithTimeout("/", 5*time.Second)
+	err = cap.AddProtectMatcherWithTimeout("/", 15*time.Second)
 	if err != nil {
 		log.Fatalf("add protect matcher failed: %s", err)
 	}
