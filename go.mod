@@ -3,6 +3,7 @@ module github.com/VillanCh/fastgocaptcha
 go 1.22.8
 
 require (
+	github.com/gobwas/glob v0.2.3
 	github.com/google/uuid v1.6.0
 	github.com/wenlng/go-captcha-assets v1.0.5
 	github.com/wenlng/go-captcha/v2 v2.0.3

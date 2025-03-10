@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/gobwas/glob"
 
 	"github.com/google/uuid"
 	"github.com/wenlng/go-captcha-assets/resources/images"
@@ -27,13 +31,84 @@ var gocaptchaGlobalJS []byte
 //go:embed resources/index.html
 var testPage []byte
 
+type SlideBlockWrapper struct {
+	data    *slide.Block
+	rawData []byte
+}
+
+type FastGoCaptchaMatcher struct {
+	glob    glob.Glob
+	timeout time.Duration
+}
+
 type FastGoCaptcha struct {
 	requestURIPrefix string
 	slideCaptcha     slide.Captcha
 
-	storeGoCaptchaData  func(id string, data *slide.Block)
-	loadGoCaptchaData   func(id string) (*slide.Block, bool)
+	matcherMutex sync.RWMutex
+	matchers     map[string]*FastGoCaptchaMatcher
+
+	sessionTimeout time.Duration
+	sessionManager *sync.Map
+
+	infof    func(format string, v ...any)
+	warningf func(format string, v ...any)
+	errorf   func(format string, v ...any)
+
+	storeGoCaptchaData  func(id string, data *SlideBlockWrapper)
+	loadGoCaptchaData   func(id string) (*SlideBlockWrapper, bool)
 	deleteGoCaptchaData func(id string)
+}
+
+func (f *FastGoCaptcha) AddProtectMatcherWithTimeout(route string, timeout time.Duration) error {
+	f.matcherMutex.Lock()
+	defer f.matcherMutex.Unlock()
+	if f.matchers == nil {
+		f.matchers = make(map[string]*FastGoCaptchaMatcher)
+	}
+	glob, err := glob.Compile(route, rune('/'))
+	if err != nil {
+		return err
+	}
+	f.matchers[route] = &FastGoCaptchaMatcher{
+		glob:    glob,
+		timeout: timeout,
+	}
+	return nil
+}
+
+func (f *FastGoCaptcha) AddProtectMatcherEverytime(route string) error {
+	f.matcherMutex.Lock()
+	defer f.matcherMutex.Unlock()
+	if f.matchers == nil {
+		f.matchers = make(map[string]*FastGoCaptchaMatcher)
+	}
+	glob, err := glob.Compile(route, rune('/'))
+	if err != nil {
+		return err
+	}
+	f.matchers[route] = &FastGoCaptchaMatcher{
+		glob:    glob,
+		timeout: 0,
+	}
+	return nil
+}
+
+func (f *FastGoCaptcha) CheckProtectMatcher(path string) (protected bool, matcher *FastGoCaptchaMatcher) {
+	f.matcherMutex.RLock()
+	defer f.matcherMutex.RUnlock()
+	for _, matcher := range f.matchers {
+		if matcher.glob.Match(path) {
+			return true, matcher
+		}
+	}
+	return false, nil
+}
+
+func (f *FastGoCaptcha) RemoveProtectMatcher(route string) {
+	f.matcherMutex.Lock()
+	defer f.matcherMutex.Unlock()
+	delete(f.matchers, route)
 }
 
 type FastGoCaptchaOption func(*FastGoCaptcha)
@@ -44,13 +119,13 @@ func WithRequestURIPrefix(prefix string) FastGoCaptchaOption {
 	}
 }
 
-func WithStoreGoCaptchaData(store func(id string, data *slide.Block)) FastGoCaptchaOption {
+func WithStoreGoCaptchaData(store func(id string, data *SlideBlockWrapper)) FastGoCaptchaOption {
 	return func(f *FastGoCaptcha) {
 		f.storeGoCaptchaData = store
 	}
 }
 
-func WithLoadGoCaptchaData(load func(id string) (*slide.Block, bool)) FastGoCaptchaOption {
+func WithLoadGoCaptchaData(load func(id string) (*SlideBlockWrapper, bool)) FastGoCaptchaOption {
 	return func(f *FastGoCaptcha) {
 		f.loadGoCaptchaData = load
 	}
@@ -78,16 +153,16 @@ func NewFastGoCaptcha(options ...FastGoCaptchaOption) (*FastGoCaptcha, error) {
 	if captcha.storeGoCaptchaData == nil && captcha.loadGoCaptchaData == nil && captcha.deleteGoCaptchaData == nil {
 		var captchaStore sync.Map
 
-		captcha.storeGoCaptchaData = func(id string, data *slide.Block) {
+		captcha.storeGoCaptchaData = func(id string, data *SlideBlockWrapper) {
 			captchaStore.Store(id, data)
 		}
 
-		captcha.loadGoCaptchaData = func(id string) (*slide.Block, bool) {
+		captcha.loadGoCaptchaData = func(id string) (*SlideBlockWrapper, bool) {
 			value, ok := captchaStore.Load(id)
 			if !ok {
 				return nil, false
 			}
-			data, ok := value.(*slide.Block)
+			data, ok := value.(*SlideBlockWrapper)
 			return data, ok
 		}
 
@@ -125,6 +200,10 @@ func NewFastGoCaptcha(options ...FastGoCaptchaOption) (*FastGoCaptcha, error) {
 	)
 
 	captcha.slideCaptcha = builder.Make()
+	captcha.sessionManager = new(sync.Map)
+	if captcha.sessionTimeout <= 0 {
+		captcha.sessionTimeout = 30 * time.Minute
+	}
 	return captcha, nil
 }
 
@@ -145,7 +224,80 @@ func (f *FastGoCaptcha) Middleware(next http.Handler) http.Handler {
 		if !skipped {
 			return
 		}
+
+		f.logInfof("checking protected for: %s", r.URL.Path)
 		if next != nil {
+			// match route and check
+			protected, matcher := f.CheckProtectMatcher(r.URL.Path)
+			if protected {
+				f.logInfof("protected: %s, matcher: %v", r.URL.Path, matcher.glob)
+				if id, ok, updatedExpiresAt := f.NoNeedCaptcha(r); ok {
+					f.logInfof("no need captcha temporarily, skip, session: %v, path: %v", id, r.URL.Path)
+					if updatedExpiresAt {
+
+					}
+					next.ServeHTTP(w, r)
+					return
+				}
+				// check captcha
+				f.logInfof("captcha need, start to check session's captcha")
+				captchaID, err := f.GetCaptchaIDFromSession(r)
+				if err != nil || captchaID == "" {
+					f.logInfof("captchaID not found, create new captcha")
+					captchaID := uuid.New().String()
+					rawData, data, err := f.createCaptchaJSON(captchaID)
+					if err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write([]byte("FastGoCaptcha:Failed to create captcha data"))
+						return
+					}
+					f.storeGoCaptchaData(captchaID, &SlideBlockWrapper{
+						data:    data,
+						rawData: rawData,
+					})
+					f.logInfof("create new captcha, store to session, redirect to captcha page")
+					f.CreateSessionWithCaptchaIDAndRedirect(w, r, captchaID)
+					return
+				}
+
+				var x string
+				x = r.URL.Query().Get("fastgocaptcha_x")
+				if x == "" {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.Write([]byte(
+						"<html><body>" +
+							"This route requires a x value(fastgocaptcha_x), view <a href='/fastgocaptcha/session/captcha?fastgocaptcha_path=" + url.QueryEscape(r.URL.Path) + "'>here</a>" +
+							" for auth it! or with query param fastgocaptcha_x" +
+							"</body></html>"))
+					return
+				}
+
+				xInt, err := strconv.Atoi(x)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write([]byte("FastGoCaptcha:Invalid x value"))
+					return
+				}
+
+				captchaData, ok := f.loadGoCaptchaData(captchaID)
+				if !ok {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write([]byte("FastGoCaptcha:Captcha ID is invalid, no captcha data found"))
+					return
+				}
+
+				if abs(captchaData.data.X-xInt) > 10 {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write([]byte("FastGoCaptcha:Verification failed"))
+					return
+				}
+
+				// 用完即删，防止重放攻击
+				f.deleteGoCaptchaData(captchaID)
+				next.ServeHTTP(w, r)
+				return
+			}
 			next.ServeHTTP(w, r)
 		} else {
 			w.WriteHeader(http.StatusNotFound)
@@ -255,13 +407,23 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 		}
 
 		// 允许一定的误差范围（10像素）
-		targetX := info.X
+		targetX := info.data.X
 		if abs(x-targetX) <= 10 {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true,
 				"message": "Verification successful",
 			})
+			f.logInfof("verification successful, update session's captcha times to 1")
+			f.UpdateSessionCaptchaTimes(r, 1)
+			newPath, _ := f.GetCaptchaRequiredPath(r)
+			if newPath != "" {
+				protected, matcher := f.CheckProtectMatcher(newPath)
+				if protected {
+					f.logInfof("verification successful, update session's captcha expires at to %v", matcher.timeout)
+					f.UpdateSessionCaptchaExpiresAt(r, matcher.timeout)
+				}
+			}
 		} else {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -269,64 +431,95 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 				"message": "Verification failed",
 			})
 		}
+		return
+	case "/fastgocaptcha/session/captcha":
+		skipped = false
+
+		id, _ := f.GetCaptchaIDFromSession(r)
+		if id == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Write([]byte("FastGoCaptcha:Captcha ID is invalid, session is not created"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(testPage)
+		return
 	case "/fastgocaptcha/captcha":
 		skipped = false
-		captData, err := f.slideCaptcha.Generate()
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte("FastGoCaptcha:Failed to generate captcha"))
-			return
+
+		id, err := f.GetCaptchaIDFromSession(r)
+		if err != nil || id == "" {
+			id = strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				f.logWarningf("captchaID not found, create new captcha, this should not happen, nonsense")
+				id = uuid.New().String()
+			}
 		}
 
-		id := uuid.New().String()
-
-		dotData := captData.GetData()
-		if dotData == nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte("FastGoCaptcha:Failed to generate captcha in captData.GetData()"))
-			return
+		f.logInfof("captchaID: %s, start to load captcha data", id)
+		dotDataWrapper, ok := f.loadGoCaptchaData(id)
+		if !ok || dotDataWrapper == nil {
+			f.logInfof("captchaID: %s, captcha data not found, create new captcha", id)
+			raw, dotData, err := f.createCaptchaJSON(id)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.Write([]byte("FastGoCaptcha:Failed to create captcha data"))
+				return
+			}
+			dotDataWrapper = &SlideBlockWrapper{
+				data:    dotData,
+				rawData: raw,
+			}
+			f.storeGoCaptchaData(id, dotDataWrapper)
+			go func() {
+				time.Sleep(f.sessionTimeout)
+				f.deleteGoCaptchaData(id)
+			}()
 		}
 
-		imageBase64, err := captData.GetMasterImage().ToBase64()
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte("FastGoCaptcha:Failed to generate captcha in captData.GetData()"))
-			return
-		}
-
-		thumbBase64, err := captData.GetTileImage().ToBase64()
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte("FastGoCaptcha:Failed to generate captcha in captData.GetData()"))
-			return
-		}
-
-		raw, err := json.Marshal(map[string]any{
-			"fastgocaptcha_id":           fmt.Sprint(id),
-			"fastgocaptcha_image_base64": imageBase64,
-			"fastgocaptcha_thumb_base64": thumbBase64,
-			"fastgocaptcha_thumb_width":  dotData.Width,
-			"fastgocaptcha_thumb_height": dotData.Height,
-			"fastgocaptcha_thumb_x":      dotData.TileX,
-			"fastgocaptcha_thumb_y":      dotData.TileY,
-		})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte("FastGoCaptcha:Failed to marshal captcha data"))
-			return
-		}
+		f.logInfof("captchaID: %s, start to check protect matcher", id)
 		w.Header().Set("Content-Type", "application/json")
-		f.storeGoCaptchaData(id, dotData)
-		w.Write(raw)
+		w.Write(dotDataWrapper.rawData)
 	default:
 		skipped = true
 	}
 	return skipped
+}
+
+func (f *FastGoCaptcha) createCaptchaJSON(id string) ([]byte, *slide.Block, error) {
+	captData, err := f.slideCaptcha.Generate()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate captcha: %v", err)
+	}
+	dotData := captData.GetData()
+	if dotData == nil {
+		return nil, nil, fmt.Errorf("failed to generate captcha in captData.GetData()")
+	}
+	imageBase64, err := captData.GetMasterImage().ToBase64()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate captcha incaptData.GetMasterImage().ToBase64(): %v", err)
+	}
+
+	thumbBase64, err := captData.GetTileImage().ToBase64()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate captcha in captData.GetTileImage().ToBase64(): %v", err)
+	}
+
+	raw, err := json.Marshal(map[string]any{
+		"fastgocaptcha_id":           fmt.Sprint(id),
+		"fastgocaptcha_image_base64": imageBase64,
+		"fastgocaptcha_thumb_base64": thumbBase64,
+		"fastgocaptcha_thumb_width":  dotData.Width,
+		"fastgocaptcha_thumb_height": dotData.Height,
+		"fastgocaptcha_thumb_x":      dotData.TileX,
+		"fastgocaptcha_thumb_y":      dotData.TileY,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal captcha data: %v", err)
+	}
+	return raw, dotData, nil
 }
 
 // abs 计算绝对值

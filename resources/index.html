@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Go-Captcha 滑动验证</title>
-    <!-- 引入 go-captcha-jslib 的 CSS -->
+    <title>FastGoCaptcha Slide-Captcha Verification Page</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -45,24 +44,51 @@
 </head>
 <body>
     <div class="container">
-        <h1>滑动验证码示例</h1>
+        <h1>Slide-Captcha Verification Page</h1>
+        <div id="path-info" style="text-align: center; margin-bottom: 15px; color: #666;">
+            <script>
+                document.write('Current Verification Path: ' + (new URLSearchParams(window.location.search).get('fastgocaptcha_path') || 'Default Path'));
+            </script>
+        </div>
         <div id="slide-wrap"></div>
-        <div class="success-message">验证成功！</div>
-        <div class="error-message">验证失败，请重试</div>
+        <div class="success-message">Verification Successful!</div>
+        <div class="error-message">Verification Failed, Please Try Again</div>
     </div>
 
     <!-- 引入 go-captcha-jslib 的 JS -->
     <script src="/static/fastgocaptcha/fastgocaptcha.js"></script>
     <script>
         showSlideCaptcha({
+            captchaUrl: (function() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const path = urlParams.get('fastgocaptcha_path');
+                return path ? `/fastgocaptcha/captcha?fastgocaptcha_path=${encodeURIComponent(path)}` : '/fastgocaptcha/captcha';
+            })(),
+            verifyUrl: (function() {
+                const urlParams = new URLSearchParams(window.location.search);
+                const path = urlParams.get('fastgocaptcha_path');
+                return path ? `/fastgocaptcha/verify?fastgocaptcha_path=${encodeURIComponent(path)}` : '/fastgocaptcha/verify';
+            })(),
             onSuccess: function(data) {
-                alert("验证成功")
+                document.querySelector('.success-message').style.display = 'block';
+                setTimeout(function() {
+                    window.location.href = (new URLSearchParams(window.location.search).get('fastgocaptcha_path') || '/');
+                }, 1000);
             },
             onError: function(error) {
-                alert("验证失败")
+                document.querySelector('.error-message').style.display = 'block';
+                setTimeout(function() {
+                    document.querySelector('.error-message').style.display = 'none';
+                }, 3000);
             },
             onClose: function() {
-                alert("验证码关闭")
+                const toast = document.createElement('div');
+                toast.textContent = "Verification cancelled";
+                toast.style.cssText = "position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background-color: #333; color: white; padding: 10px 20px; border-radius: 4px; z-index: 9999;";
+                document.body.appendChild(toast);
+                setTimeout(function() {
+                    document.body.removeChild(toast);
+                }, 3000);
             }
         });
     </script>  
