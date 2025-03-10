@@ -1,4 +1,4 @@
-module github.com/VillanCh/fastgocaptcha
+module github.com/yaklang/fastgocaptcha
 
 go 1.22.8
 

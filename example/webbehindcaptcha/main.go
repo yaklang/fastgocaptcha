@@ -10,7 +10,7 @@ import (
 
 	_ "embed"
 
-	"github.com/VillanCh/fastgocaptcha"
+	"github.com/yaklang/fastgocaptcha"
 )
 
 // 获取可用端口

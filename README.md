@@ -38,7 +38,7 @@ This project is built upon the excellent work of several open-source projects:
 
 1. Install the package:
 ```bash
-go get github.com/VillanCh/fastgocaptcha
+go get github.com/yaklang/fastgocaptcha
 ```
 
 2. Basic usage:
@@ -46,7 +46,7 @@ go get github.com/VillanCh/fastgocaptcha
 package main
 
 import (
-    "github.com/VillanCh/fastgocaptcha"
+    "github.com/yaklang/fastgocaptcha"
     "net/http"
 )
 
@@ -211,7 +211,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/VillanCh/fastgocaptcha"
+    "github.com/yaklang/fastgocaptcha"
 )
 
 func main() {
@@ -275,7 +275,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/VillanCh/fastgocaptcha"
+    "github.com/yaklang/fastgocaptcha"
 )
 
 func main() {
@@ -354,7 +354,7 @@ FastGoCaptcha 是一个高性能、易于集成的滑动验证码解决方案，
 
 1. 安装包：
 ```bash
-go get github.com/VillanCh/fastgocaptcha
+go get github.com/yaklang/fastgocaptcha
 ```
 
 2. 基本用法：
@@ -362,7 +362,7 @@ go get github.com/VillanCh/fastgocaptcha
 package main
 
 import (
-    "github.com/VillanCh/fastgocaptcha"
+    "github.com/yaklang/fastgocaptcha"
     "net/http"
 )
 
@@ -527,7 +527,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/VillanCh/fastgocaptcha"
+    "github.com/yaklang/fastgocaptcha"
 )
 
 func main() {
@@ -591,7 +591,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/VillanCh/fastgocaptcha"
+    "github.com/yaklang/fastgocaptcha"
 )
 
 func main() {
