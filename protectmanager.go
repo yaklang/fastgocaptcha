@@ -183,10 +183,15 @@ func (f *FastGoCaptcha) CreateSessionWithCaptchaIDAndRedirect(w http.ResponseWri
 	cookie, err := r.Cookie("fastgocaptcha_session")
 	if err != nil {
 		f.logInfof("CreateSessionWithCaptchaIDAndRedirect: session is not found, create new session")
-		return errors.New("session is not found")
+		cookie = &http.Cookie{
+			Name:     "fastgocaptcha_session",
+			Value:    session.id,
+			Path:     "/",
+			HttpOnly: true,
+			MaxAge:   int(f.sessionTimeout.Seconds()),
+		}
 	}
 	oldId := cookie.Value
-
 	if oldId != session.id {
 		cookie = &http.Cookie{
 			Name:     "fastgocaptcha_session",
