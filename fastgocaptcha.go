@@ -60,38 +60,65 @@ type FastGoCaptcha struct {
 	deleteGoCaptchaData func(id string)
 }
 
-func (f *FastGoCaptcha) AddProtectMatcherWithTimeout(route string, timeout time.Duration) error {
+func testRoute(glob glob.Glob) (ok bool) {
+	ok = true
+	for _, route := range []string{
+		"/fastgocaptcha/",
+		"/fastgocaptcha/captcha",
+		"/fastgocaptcha/verify",
+		"/fastgocaptcha/resources/fastgocaptcha.js",
+		"/fastgocaptcha/resources/gocaptcha.global.css",
+		"/fastgocaptcha/resources/gocaptcha.global.js",
+		"/fastgocaptcha/session/captcha",
+	} {
+		if glob.Match(route) {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *FastGoCaptcha) addProtectMatcher(rawRoute string, timeout time.Duration) error {
 	f.matcherMutex.Lock()
 	defer f.matcherMutex.Unlock()
+
+	var routes []string = make([]string, 0, 2)
+	routes = append(routes, rawRoute)
+	if !strings.HasSuffix(rawRoute, "/") {
+		routes = append(routes, rawRoute+"/")
+	}
+
 	if f.matchers == nil {
 		f.matchers = make(map[string]*FastGoCaptchaMatcher)
 	}
-	glob, err := glob.Compile(route, rune('/'))
-	if err != nil {
-		return err
-	}
-	f.matchers[route] = &FastGoCaptchaMatcher{
-		glob:    glob,
-		timeout: timeout,
+
+	for _, route := range routes {
+
+		glob, err := glob.Compile(route, rune('/'))
+		if err != nil {
+			f.logErrorf("failed to compile glob: %v", err)
+			continue
+		}
+
+		if !testRoute(glob) {
+			f.logErrorf("route %s is not allowed", route)
+			continue
+		}
+
+		f.matchers[route] = &FastGoCaptchaMatcher{
+			glob:    glob,
+			timeout: timeout,
+		}
 	}
 	return nil
 }
 
+func (f *FastGoCaptcha) AddProtectMatcherWithTimeout(route string, timeout time.Duration) error {
+	return f.addProtectMatcher(route, timeout)
+}
+
 func (f *FastGoCaptcha) AddProtectMatcherEverytime(route string) error {
-	f.matcherMutex.Lock()
-	defer f.matcherMutex.Unlock()
-	if f.matchers == nil {
-		f.matchers = make(map[string]*FastGoCaptchaMatcher)
-	}
-	glob, err := glob.Compile(route, rune('/'))
-	if err != nil {
-		return err
-	}
-	f.matchers[route] = &FastGoCaptchaMatcher{
-		glob:    glob,
-		timeout: 0,
-	}
-	return nil
+	return f.addProtectMatcher(route, 0)
 }
 
 func (f *FastGoCaptcha) CheckProtectMatcher(path string) (protected bool, matcher *FastGoCaptchaMatcher) {
