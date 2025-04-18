@@ -190,6 +190,7 @@ func (f *FastGoCaptcha) CreateSessionWithCaptchaIDAndRedirect(w http.ResponseWri
 			HttpOnly: true,
 			MaxAge:   int(f.sessionTimeout.Seconds()),
 			SameSite: http.SameSiteNoneMode,
+			Secure:   true,
 		}
 	}
 	oldId := cookie.Value
@@ -201,6 +202,7 @@ func (f *FastGoCaptcha) CreateSessionWithCaptchaIDAndRedirect(w http.ResponseWri
 			HttpOnly: true,
 			MaxAge:   int(f.sessionTimeout.Seconds()),
 			SameSite: http.SameSiteNoneMode,
+			Secure:   true,
 		}
 	}
 	http.SetCookie(w, cookie)
