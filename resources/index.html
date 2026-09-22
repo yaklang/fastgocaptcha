@@ -54,7 +54,7 @@
         <h1>Slide-Captcha Verification Page</h1>
         <div id="path-info" style="text-align: center; margin-bottom: 15px; color: #666;">
             <script>
-                document.write('Current Verification Path: ' + (new URLSearchParams(window.location.search).get('fastgocaptcha_path') || 'Default Path'));
+                document.currentScript.parentElement.textContent = 'Current Verification Path: ' + (new URLSearchParams(window.location.search).get('fastgocaptcha_path') || 'Default Path');
             </script>
         </div>
         <div id="slide-wrap"></div>

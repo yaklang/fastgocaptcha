@@ -1,0 +1,22 @@
+name: Test
+on:
+  push:
+  pull_request:
+env:
+  GOWORK: "off"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+      - run: go vet ./...
+      - name: Enforce dependency and asset budget
+        run: |
+          test "$(go list -m all | wc -l)" -eq 5
+          test "$(git ls-files -z | xargs -0 wc -c | tail -1 | awk '{print $1}')" -lt 250000
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum

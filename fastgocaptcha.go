@@ -14,9 +14,6 @@ import (
 	"github.com/gobwas/glob"
 
 	"github.com/google/uuid"
-	"github.com/wenlng/go-captcha-assets/resources/images"
-	"github.com/wenlng/go-captcha-assets/resources/tiles"
-	"github.com/wenlng/go-captcha/v2/slide"
 )
 
 //go:embed resources/v1.0.9/fastgocaptcha.js
@@ -32,8 +29,9 @@ var gocaptchaGlobalJS []byte
 var testPage []byte
 
 type SlideBlockWrapper struct {
-	data    *slide.Block
-	rawData []byte
+	data      *SlideData
+	rawData   []byte
+	expiresAt time.Time
 }
 
 type FastGoCaptchaMatcher struct {
@@ -42,8 +40,9 @@ type FastGoCaptchaMatcher struct {
 }
 
 type FastGoCaptcha struct {
+	verifyMutex      sync.Mutex
+	sessionMutex     sync.Mutex
 	requestURIPrefix string
-	slideCaptcha     slide.Captcha
 
 	matcherMutex sync.RWMutex
 	matchers     map[string]*FastGoCaptchaMatcher
@@ -179,8 +178,36 @@ func NewFastGoCaptcha(options ...FastGoCaptchaOption) (*FastGoCaptcha, error) {
 	// 如果都不具备，使用 sync.Map 作为默认存储
 	if captcha.storeGoCaptchaData == nil && captcha.loadGoCaptchaData == nil && captcha.deleteGoCaptchaData == nil {
 		var captchaStore sync.Map
+		var storeMutex sync.Mutex
+		var count int
 
 		captcha.storeGoCaptchaData = func(id string, data *SlideBlockWrapper) {
+			storeMutex.Lock()
+			defer storeMutex.Unlock()
+			now := time.Now()
+			captchaStore.Range(func(key, value any) bool {
+				if !now.Before(value.(*SlideBlockWrapper).expiresAt) {
+					captchaStore.Delete(key)
+					count--
+				}
+				return true
+			})
+			if _, exists := captchaStore.Load(id); !exists {
+				if count >= 4096 {
+					var oldestKey any
+					var oldest time.Time
+					captchaStore.Range(func(key, value any) bool {
+						expires := value.(*SlideBlockWrapper).expiresAt
+						if oldestKey == nil || expires.Before(oldest) {
+							oldestKey, oldest = key, expires
+						}
+						return true
+					})
+					captchaStore.Delete(oldestKey)
+					count--
+				}
+				count++
+			}
 			captchaStore.Store(id, data)
 		}
 
@@ -190,43 +217,18 @@ func NewFastGoCaptcha(options ...FastGoCaptchaOption) (*FastGoCaptcha, error) {
 				return nil, false
 			}
 			data, ok := value.(*SlideBlockWrapper)
-			return data, ok
+			return data, ok && time.Now().Before(data.expiresAt)
 		}
 
 		captcha.deleteGoCaptchaData = func(id string) {
-			captchaStore.Delete(id)
+			storeMutex.Lock()
+			if _, ok := captchaStore.LoadAndDelete(id); ok {
+				count--
+			}
+			storeMutex.Unlock()
 		}
 	}
 
-	builder := slide.NewBuilder(
-		slide.WithEnableGraphVerticalRandom(true),
-	)
-	imgs, err := images.GetImages()
-	if err != nil {
-		return nil, err
-	}
-
-	graphs, err := tiles.GetTiles()
-	if err != nil {
-		return nil, err
-	}
-
-	var newGraphs = make([]*slide.GraphImage, 0, len(graphs))
-	for i := 0; i < len(graphs); i++ {
-		graph := graphs[i]
-		newGraphs = append(newGraphs, &slide.GraphImage{
-			OverlayImage: graph.OverlayImage,
-			MaskImage:    graph.MaskImage,
-			ShadowImage:  graph.ShadowImage,
-		})
-	}
-
-	builder.SetResources(
-		slide.WithGraphImages(newGraphs),
-		slide.WithBackgrounds(imgs),
-	)
-
-	captcha.slideCaptcha = builder.Make()
 	captcha.sessionManager = new(sync.Map)
 	if captcha.sessionTimeout <= 0 {
 		captcha.sessionTimeout = 30 * time.Minute
@@ -279,8 +281,9 @@ func (f *FastGoCaptcha) Middleware(next http.Handler) http.Handler {
 						return
 					}
 					f.storeGoCaptchaData(captchaID, &SlideBlockWrapper{
-						data:    data,
-						rawData: rawData,
+						data:      data,
+						rawData:   rawData,
+						expiresAt: time.Now().Add(5 * time.Minute),
 					})
 					f.logInfof("create new captcha, store to session, redirect to captcha page")
 					f.CreateSessionWithCaptchaIDAndRedirect(w, r, captchaID)
@@ -308,21 +311,10 @@ func (f *FastGoCaptcha) Middleware(next http.Handler) http.Handler {
 					return
 				}
 
-				captchaData, ok := f.loadGoCaptchaData(captchaID)
-				if !ok {
-					w.WriteHeader(http.StatusBadRequest)
-					w.Write([]byte("FastGoCaptcha:Captcha ID is invalid, no captcha data found"))
+				if !f.VerifySlide(captchaID, xInt) {
+					http.Error(w, "FastGoCaptcha:Verification failed or expired", http.StatusBadRequest)
 					return
 				}
-
-				if abs(captchaData.data.X-xInt) > 10 {
-					w.WriteHeader(http.StatusBadRequest)
-					w.Write([]byte("FastGoCaptcha:Verification failed"))
-					return
-				}
-
-				// 用完即删，防止重放攻击
-				f.deleteGoCaptchaData(captchaID)
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -370,6 +362,8 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		defer r.Body.Close()
 		contentType := r.Header.Get("Content-Type")
 		var id, xStr string
 		var err error
@@ -380,12 +374,13 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 			id = r.FormValue("id")
 			xStr = r.FormValue("x")
 		case strings.HasPrefix(tolower, "multipart/form-data"):
-			if err := r.ParseMultipartForm(32 << 20); err != nil {
+			if err := r.ParseMultipartForm(64 << 10); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 				w.Write([]byte("FastGoCaptcha:Failed to parse multipart form"))
 				return
 			}
+			defer r.MultipartForm.RemoveAll()
 			id = r.FormValue("id")
 			xStr = r.FormValue("x")
 		case strings.HasPrefix(tolower, "application/json"), strings.HasPrefix(tolower, "text/json"), strings.HasPrefix(tolower, "application/x-json"):
@@ -414,34 +409,14 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		// 获取存储的验证码信息
-		info, ok := f.loadGoCaptchaData(id)
-		if !ok {
-			w.WriteHeader(http.StatusBadRequest)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte("FastGoCaptcha:Captcha expired or invalid"))
+		// A session may only be authorized by its own challenge.
+		sessionID, _ := f.GetCaptchaIDFromSession(r)
+		if sessionID != "" && sessionID != id {
+			http.Error(w, "FastGoCaptcha:Captcha ID does not match session", http.StatusBadRequest)
 			return
 		}
+		if f.VerifySlide(id, x) {
 
-		// 用完即删，防止重放攻击
-		defer f.deleteGoCaptchaData(id)
-
-		// 验证滑动结果
-		if info == nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte("FastGoCaptcha:Invalid captcha data"))
-			return
-		}
-
-		// 允许一定的误差范围（10像素）
-		targetX := info.data.X
-		if abs(x-targetX) <= 10 {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": true,
-				"message": "Verification successful",
-			})
 			f.logInfof("verification successful, update session's captcha times to 1")
 			f.UpdateSessionCaptchaTimes(r, 1)
 			newPath, _ := f.GetCaptchaRequiredPath(r)
@@ -452,6 +427,8 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 					f.UpdateSessionCaptchaExpiresAt(r, matcher.timeout)
 				}
 			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "Verification successful"})
 		} else {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -475,14 +452,15 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 		return
 	case "/fastgocaptcha/captcha":
 		skipped = false
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 
 		id, err := f.GetCaptchaIDFromSession(r)
 		if err != nil || id == "" {
-			id = strings.TrimSpace(r.URL.Query().Get("id"))
-			if id == "" {
-				f.logWarningf("captchaID not found, create new captcha, this should not happen, nonsense")
-				id = uuid.New().String()
-			}
+			id = uuid.New().String()
 		}
 
 		f.logInfof("captchaID: %s, start to load captcha data", id)
@@ -497,14 +475,11 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 				return
 			}
 			dotDataWrapper = &SlideBlockWrapper{
-				data:    dotData,
-				rawData: raw,
+				data:      dotData,
+				rawData:   raw,
+				expiresAt: time.Now().Add(5 * time.Minute),
 			}
 			f.storeGoCaptchaData(id, dotDataWrapper)
-			go func() {
-				time.Sleep(f.sessionTimeout)
-				f.deleteGoCaptchaData(id)
-			}()
 		}
 
 		f.logInfof("captchaID: %s, start to check protect matcher", id)
@@ -516,44 +491,13 @@ func (f *FastGoCaptcha) HandleFastGoCaptcha(w http.ResponseWriter, r *http.Reque
 	return skipped
 }
 
-func (f *FastGoCaptcha) createCaptchaJSON(id string) ([]byte, *slide.Block, error) {
-	captData, err := f.slideCaptcha.Generate()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate captcha: %v", err)
-	}
-	dotData := captData.GetData()
-	if dotData == nil {
-		return nil, nil, fmt.Errorf("failed to generate captcha in captData.GetData()")
-	}
-	imageBase64, err := captData.GetMasterImage().ToBase64()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate captcha incaptData.GetMasterImage().ToBase64(): %v", err)
-	}
-
-	thumbBase64, err := captData.GetTileImage().ToBase64()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate captcha in captData.GetTileImage().ToBase64(): %v", err)
-	}
-
-	raw, err := json.Marshal(map[string]any{
-		"fastgocaptcha_id":           fmt.Sprint(id),
-		"fastgocaptcha_image_base64": imageBase64,
-		"fastgocaptcha_thumb_base64": thumbBase64,
-		"fastgocaptcha_thumb_width":  dotData.Width,
-		"fastgocaptcha_thumb_height": dotData.Height,
-		"fastgocaptcha_thumb_x":      dotData.TileX,
-		"fastgocaptcha_thumb_y":      dotData.TileY,
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal captcha data: %v", err)
-	}
-	return raw, dotData, nil
-}
-
-// abs 计算绝对值
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
+// VerifySlide atomically consumes a stored slide challenge on every attempt.
+// Custom storage callbacks must be concurrency safe; shared distributed stores must
+// additionally serialize consumption across manager instances.
+func (f *FastGoCaptcha) VerifySlide(id string, x int) bool {
+	f.verifyMutex.Lock()
+	defer f.verifyMutex.Unlock()
+	data, ok := f.loadGoCaptchaData(id)
+	f.deleteGoCaptchaData(id)
+	return ok && data != nil && data.data != nil && time.Now().Before(data.expiresAt) && data.data.Verify(x, 10)
 }

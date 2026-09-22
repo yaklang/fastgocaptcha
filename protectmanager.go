@@ -3,6 +3,7 @@ package fastgocaptcha
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 )
 
 type PathedSession struct {
+	mu        sync.Mutex
 	id        string
 	path      string
 	captchaID string
@@ -32,7 +34,7 @@ func (f *FastGoCaptcha) GetCaptchaRequiredPath(r *http.Request) (string, error) 
 
 	f.logInfof("GetCaptchaRequiredPath: %s", r.URL.Path)
 	requireQueryPath := false
-	switch r.URL.Path {
+	switch strings.TrimPrefix(r.URL.Path, f.requestURIPrefix) {
 	case "/fastgocaptcha/session/captcha", "/fastgocaptcha/session/captcha/":
 		requireQueryPath = true
 	case "/fastgocaptcha/captcha", "/fastgocaptcha/captcha/":
@@ -52,12 +54,36 @@ func (f *FastGoCaptcha) GetCaptchaRequiredPath(r *http.Request) (string, error) 
 }
 
 func (f *FastGoCaptcha) GetOrCreateSession(r *http.Request) *FastGoCaptchaSession {
+	f.sessionMutex.Lock()
+	defer f.sessionMutex.Unlock()
 	var id string
 	cookie, err := r.Cookie("fastgocaptcha_session")
 	if err != nil {
 		id = uuid.New().String()
 	} else {
-		id = cookie.Value
+		if stored, ok := f.sessionManager.Load(cookie.Value); ok && time.Now().Before(stored.(*FastGoCaptchaSession).expiresAt) {
+			return stored.(*FastGoCaptchaSession)
+		}
+		id = uuid.New().String()
+	}
+	now := time.Now()
+	count := 0
+	var oldestKey any
+	var oldest time.Time
+	f.sessionManager.Range(func(key, value any) bool {
+		if !now.Before(value.(*FastGoCaptchaSession).expiresAt) {
+			f.sessionManager.Delete(key)
+		} else {
+			count++
+			expires := value.(*FastGoCaptchaSession).expiresAt
+			if oldestKey == nil || expires.Before(oldest) {
+				oldestKey, oldest = key, expires
+			}
+		}
+		return true
+	})
+	if count >= 4096 {
+		f.sessionManager.Delete(oldestKey)
 	}
 	sessionraw, ok := f.sessionManager.Load(id)
 	if !ok {
@@ -78,6 +104,8 @@ func (f *FastGoCaptcha) GetCaptchaIDFromSession(r *http.Request) (string, error)
 	if err != nil {
 		return "", err
 	}
+	pathedSession.mu.Lock()
+	defer pathedSession.mu.Unlock()
 	return pathedSession.captchaID, nil
 }
 
@@ -92,6 +120,10 @@ func (f *FastGoCaptcha) GetCaptchaSession(r *http.Request) (*PathedSession, erro
 		return nil, errors.New("session is not found")
 	}
 	session := sessionraw.(*FastGoCaptchaSession)
+	if !time.Now().Before(session.expiresAt) {
+		f.sessionManager.Delete(sessionID)
+		return nil, errors.New("session expired")
+	}
 	newpath, err := f.GetCaptchaRequiredPath(r)
 	if err != nil {
 		return nil, err
@@ -113,6 +145,8 @@ func (f *FastGoCaptcha) NoNeedCaptcha(r *http.Request) (sessionId string, noNeed
 		f.logInfof("NoNeedCaptcha check pathedSession error: %v", err)
 		return "", false, false
 	}
+	pathedSession.mu.Lock()
+	defer pathedSession.mu.Unlock()
 	if pathedSession.captchaAllowedTimes <= 0 {
 		return pathedSession.id, pathedSession.captchaExpiredAt.After(time.Now()), false
 	}
@@ -125,6 +159,8 @@ func (f *FastGoCaptcha) UpdateSessionCaptchaID(r *http.Request, captchaID string
 	if err != nil {
 		return err
 	}
+	pathedSession.mu.Lock()
+	defer pathedSession.mu.Unlock()
 	pathedSession.captchaID = captchaID
 	return nil
 }
@@ -134,6 +170,8 @@ func (f *FastGoCaptcha) UpdateSessionCaptchaExpiresAt(r *http.Request, timeout t
 	if err != nil {
 		return err
 	}
+	pathedSession.mu.Lock()
+	defer pathedSession.mu.Unlock()
 	pathedSession.captchaExpiredAt = time.Now().Add(timeout)
 	f.logInfof("UpdateSessionCaptchaExpiresAt: %s, %v", pathedSession.id, pathedSession.captchaExpiredAt)
 	return nil
@@ -144,15 +182,13 @@ func (f *FastGoCaptcha) UpdateSessionCaptchaTimes(r *http.Request, times int) er
 	if err != nil {
 		return err
 	}
+	pathedSession.mu.Lock()
+	defer pathedSession.mu.Unlock()
 	pathedSession.captchaAllowedTimes = times
 	return nil
 }
 
 func (f *FastGoCaptcha) CreateSessionWithCaptchaIDAndRedirect(w http.ResponseWriter, r *http.Request, captchaID string) error {
-	// 如果sessionManager未初始化，则初始化它
-	if f.sessionManager == nil {
-		f.sessionManager = &sync.Map{}
-	}
 
 	session := f.GetOrCreateSession(r)
 	newPath, err := f.GetCaptchaRequiredPath(r)
@@ -177,6 +213,8 @@ func (f *FastGoCaptcha) CreateSessionWithCaptchaIDAndRedirect(w http.ResponseWri
 		if !ok {
 			return errors.New("captcha is not required")
 		}
+		pathedSession.mu.Lock()
+		defer pathedSession.mu.Unlock()
 		pathedSession.captchaID = captchaID
 	}
 
@@ -189,8 +227,8 @@ func (f *FastGoCaptcha) CreateSessionWithCaptchaIDAndRedirect(w http.ResponseWri
 			Path:     "/",
 			HttpOnly: true,
 			MaxAge:   int(f.sessionTimeout.Seconds()),
-			SameSite: http.SameSiteNoneMode,
-			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   r.TLS != nil,
 		}
 	}
 	oldId := cookie.Value
@@ -201,8 +239,8 @@ func (f *FastGoCaptcha) CreateSessionWithCaptchaIDAndRedirect(w http.ResponseWri
 			Path:     "/",
 			HttpOnly: true,
 			MaxAge:   int(f.sessionTimeout.Seconds()),
-			SameSite: http.SameSiteNoneMode,
-			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   r.TLS != nil,
 		}
 	}
 	http.SetCookie(w, cookie)
